@@ -1,3 +1,3 @@
-
-/mnt/c/Users/burluiva/Documents/FIT/IOS/project1/mole/boba;group;1678382369176002400;1678382423599932900;1678382848601782300;1678382864977943300;1678382879555739400;1678384502682981800
-/mnt/c/Users/burluiva/Documents/FIT/IOS/project1/mole/biba;group;1678384557653774900
+test;boba;1000
+test;roba;1000
+test;;100

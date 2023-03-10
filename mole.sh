@@ -108,10 +108,44 @@ open_file_mole_rc() {
   fi
 }
 
+#[FILE_REG_EXPR] [GROUPS] [N_START_DATE] [N_END_DATE]
+filter_mole_rc() {
+  awk -F";" \
+  -v dir_exp="$1" -v groups="$2" \
+  -v start_date="$3" -v end_date="$4" \
+  '
+    BEGIN {
+      split(groups, group_arr, ",");
+    }
+    {
+      good = 0
+      if ($1 ~ dir_exp)
+      {
+        find_group = 0
+        for (key in group_arr) {
+          if (group_arr[key]!="" && group_arr[key]==$2) { find_group = 1; break; }
+        }
+
+        for (i=3;i<=NF && find_group==1;i++)
+        {
+          if ((start_date=="" || $i+0>=start_date+0) &&
+              (end_date=="" || $i+0<=end_date+0))
+          {
+            good = 1;
+            break;
+          }
+        }
+        if (good) print $0
+      }
+    }' \
+  "$MOLE_RC"
+}
+
 #[DIRECTORY] [GROUPS] [N_START_DATE] [N_END_DATE] [M_FLAG]
 open_directory_mole_rc() {
-  _tmp="$( filter_mole_rc "$1" "$2" "$3" "$4" | awk -F";" \
-  -v m_flag="$5" \
+  _tmp="$( #TODO read speciifcations of directory search add ^$1[^\/]+\$
+    filter_mole_rc "$1" "$2" "$3" "$4" | awk -F";" \
+    -v m_flag="$5" \
     '
     BEGIN {
       file = ""
@@ -140,7 +174,8 @@ open_directory_mole_rc() {
       if (file != "") print file
       if (group != "") print group
     }' \
-    "$MOLE_RC") "
+    "$MOLE_RC"
+  ) "
 
   if ! [ "$(echo "$_tmp" | wc -l)" -eq 2 ]; then
     error "Could not find the file, which suits filters."
@@ -151,64 +186,34 @@ open_directory_mole_rc() {
 
 # [DIRECTORY] [GROUPS] [START_DATE] [END_DATE]
 list_info_mole_rc() {
-_tmp="$( filter_mole_rc "$1" "$2" "$3" "$4" | awk -F";" \
+    filter_mole_rc "$1" "$2" "$3" "$4" | awk -F";" -v OFS=";" \
     '
     {
-      map[$1]+="$2,"
+      if (map[$1]=="") map[$1]=$2; else map[$1]=map[$1] "," $2;
     }
     END {
       for (key in map) {
-        printf("%s: %s", key, substr(map[key], 1, length(map[key])-1) )
+        printf("%s: %s\n", key, map[key]);
       }
     }
-    ' \
-    "$MOLE_RC") "
+    ';
 }
 
-
-#[DIRECTORY] [GROUPS] [N_START_DATE] [N_END_DATE]
-filter_mole_rc() {
-  awk -F";" \
-    -v dir_exp="^$(get_absolute_path "$1")[^\/]+$" -v groups="$2" \
-    -v start_date="$3" -v end_date="$4" -v m_flag="$5" \
-    '
-    BEGIN {
-      split(groups, group_arr, ",");
-    }
-    {
-      good = 0
-      if ($1 ~ dir_exp)
-      {
-        find_group = 0
-        for (i in group_arr) {
-          if (i==$2) { find_group = 1; break; }
-        }
-
-        for (int i=3;i<=NF && find_group;i++)
-        {
-          if ((start_date=="" || $i+0>=start_date) &&
-              (end_date=="" || $i+)<=end_date))
-          {
-            good = 1;
-            break;
-          }
-        }
-        if (good) print $0
-      }
-    }' \
-    "$MOLE_RC"
-}
-
-# [DIRECTORY] [START_DATE] [END_DATE]
+# [DIRECTORIES (should be absolute paths)] [START_DATE] [END_DATE]
 create_secret_log() {
   if ! [ -d "$1" ]; then
     error "Given path is not directory."
   fi
 
   awk -F";" -v OFS=';' \
-    -v directory="$(get_absolute_path "$1")" -v start_date="$2" -v end_date="$3" \
-    '
+  -v directories="$1" -v start_date="$2" -v end_date="$3" \
+  '
+  BEGIN {
+    split(directories, directory_arr, ";")
+  }
   {
+    for (key in directory_arr) {
+    directory="^" directory_arr[key] "[^\/]+$"
     if ($1 ~ directory) {
       fields = 1
       for(i=3;i<=NF;i++)
@@ -221,7 +226,9 @@ create_secret_log() {
       NF=fields;
       if (NF>=2) {
         print $0
+        break;
       }
+    }
     }
   }' "$MOLE_RC"
 }
@@ -233,8 +240,8 @@ create_secret_log() {
 write_mole_rc() {
   _tmp_file=$(mktemp) #FIXME mktemp is not POSIX compliant
   awk -F";" -v OFS=';' \
-    -v name="$1" -v group="$2" -v date="$3" \
-    '
+  -v name="$1" -v group="$2" -v date="$3" \
+  '
       BEGIN { found = 0; }
       {
         if ($1==name && $2==group) {
@@ -246,24 +253,24 @@ write_mole_rc() {
       }
       END { if (found == 0) print name,group,date }
       ' \
-    "$MOLE_RC" >"$_tmp_file"
+  "$MOLE_RC" >"$_tmp_file"
   mv "$_tmp_file" "$MOLE_RC"
 }
 
 ################################# READ_OF_ARGS #######################################
 a_flag="" # date type
 b_flag="" # date type
-h_flag=1  # help flag
+h_flag=0  # help flag
 g_flag="" # string type (collection fo strings in string)
-m_flag=1  # flag to open file which is opened mostly
-d_flag=1  # default group flag
+m_flag=0  # flag to open file which is opened mostly
+d_flag=0  # default group flag
 
-list_flag=1
-secret_log_flag=1
+list_flag=0
+secret_log_flag=0
 
 case $1 in
-list) list_flag=0 ;;
-secret-log) secret_log_flag=0 ;;
+list) list_flag=1 ;;
+secret-log) secret_log_flag=1 ;;
 esac
 
 if [ "$list_flag" -eq 0 ] || [ "$secret_log_flag" -eq 0 ]; then
@@ -273,12 +280,12 @@ fi
 
 while getopts d:a:b:h:g:m: flag; do
   case "${flag}" in
-  d) d_flag=0 ;;
+  d) d_flag=1 ;;
   a) a_flag="$(date_to_nanoseconds "$OPTARG")" ;;
   b) b_flag="$(date_to_nanoseconds "$OPTARG")" ;;
-  h) h_flag=0 ;;
+  h) h_flag=1 ;;
   g) g_flag=$OPTARG ;;
-  m) m_flag=0 ;;
+  m) m_flag=1 ;;
   *) error "Unknown option: $OPTARG." ;;
   esac
 done
@@ -286,8 +293,15 @@ done
 shift "$((OPTIND - 1))"
 
 #secret-log processing
-if [ $secret_log_flag -eq 0 ]; then
-  echo "Generating secret log"
+if [ $secret_log_flag -eq 1 ]; then
+
+  directories="$1";
+  shift;
+
+  while [ "$#" -ne 0 ]; do
+    directories=""
+  done
+
   exit 0
 fi
 #######################
@@ -312,6 +326,9 @@ echo "CONFIGS: rc $MOLE_RC | ed $EDITOR"
 #filter_files_search_mole_rc "" "" "" ""
 #write_mole_rc "test1" "" "$(get_current_time)"
 #write_mole_rc "giga1" "" "$(get_current_time)"
+#
+#open_file_mole_rc "biba" "group"
+#create_secret_log "." "" ""
 
-open_file_mole_rc "biba" "group"
-create_secret_log "." "" ""
+filter_mole_rc "test" "boba,roba" "" ""
+list_info_mole_rc "test" "boba,roba" "" ""
