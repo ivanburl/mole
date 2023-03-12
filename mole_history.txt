@@ -1,3 +1,0 @@
-test;boba;1000
-test;roba;1000
-test;;100
