@@ -1,109 +1,144 @@
 #!/usr/bin/env sh
 
 #configurations
-EDITOR="${EDITOR:-${VISUAL:-vi}}";
-MOLE_RC="${MOLE_RC}";
-NSEC_IN_SEC=1000000000;
+EDITOR="${EDITOR:-${VISUAL:-vi}}"
+MOLE_RC="${MOLE_RC}"
+NSEC_IN_SEC=1000000000
+DELIMITER='-'
 
 # [DESCRIPTION]
 # returns an error with code 1 and description
 error() {
-  echo "Error occurred. Description: $1";
-  exit 1;
+  echo "Error occurred. Description: $1"
+  exit 1
 }
 
 help() {
-  echo "help";
+  echo "
+        DEPENDENCIES: wc, sed, awk, realpath, date
+        NOTE: for correct work please set up MOLE_RC and EDITOR value
+        mole -h  #get help
+        mole [-g GROUP_NAME] FILE #open file and set the group flag
+        mole [-m] [FILTER] [DIRECTORY] #open last edited or opened file in directory, which suits filters
+        mole list [FILTER] [DIRECTORY] # enlist files with their group info (files without group, are signed as '-')
+        [FILTER] = [-g GROUP1,GROUP2,...,GROUPN] [-a DATE] [-b DATE]
+        --g - group flag
+        --a - files which were opened or edited from DATE (DATE format YYYY-MM-DD)
+        --b - files which were opened or edited before DATE (DATE format YYYY-MM-DD)
+        --m - open file by frequency of opening or editing"
 }
 
 # [number1] [number2]
 integer_max() {
   if [ "$1" -gt "$2" ]; then
-    echo "$1";
+    echo "$1"
   else
-    echo "$2";
+    echo "$2"
   fi
 }
 
 # args:
 # FILE - file to gen absolute path
-get_absolute_path() {
-  if ! [ -e "$1" ]; then
-    error "Given path $1 does not exist";
-  fi
-  readlink -f "$1";
+get_absolute_path()
+{
+  _absolute_path=$1
+  _unrecognised_path=""
+
+  while ! realpath "$_absolute_path" > /dev/null 2>&1; do # send result to null + send stderr to the stdout
+    _unrecognised_path="/$(basename "$_absolute_path")$_unrecognised_path"
+    _absolute_path="$(dirname "$_absolute_path")"
+  done
+
+  _absolute_path="$(realpath "$_absolute_path")$_unrecognised_path"
+
+  echo "$_absolute_path"
 }
 
 get_current_time() {
-  date +%s%N;
+  if [ -z "${BINSLOZKA}" ]; then
+      date +%s%N
+  else
+      # for testing
+      date -d "$("${BINSLOZKA}"/testdate)" +%s%N
+  fi
 }
 
 # args: FILE - file to check
 get_edited_file_time() {
-  date -r "$1" +%s%N;
+  if ! [ -e "$1" ]; then
+    error "File $1 does not exist."
+  fi
+
+  integer_max "$(stat "$1" -c "%X")" "$(stat "$1" -c "%Y")"
 }
 
-#[STRING]
+#[STRING] #[END_OF_DAY]
 date_to_nanoseconds() {
-  if ! date -d "$1" +%s%N; then
-    error "Incorrect date format. Given $1, expected yyyy-mm-dd.";
+
+  if [ -z "$(echo "$1" | sed -n '/^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$/p')" ]; then
+    error "Incorrect date format. Given $1, expected yyyy-mm-dd."
+  fi
+
+  if [ "$2" -eq 1 ]; then
+    awk -v date="$1" 'BEGIN{ print mktime(sprintf("%s 00 00 00", date)) * 1000000000}'
+  else
+    awk -v date="$1" 'BEGIN {print mktime(sprintf("%s 23 59 59", date)) * 1000000000}'
   fi
 }
 
 #[NANOSECONDS]
 nanoseconds_to_date() {
   if ! date -d @"$(($1 / $NSEC_IN_SEC))" +'%Y-%m-%d_%H-%M-%S'; then
-    error "Cant convert nanoseconds to the date.";
+    error "Cant convert nanoseconds to the date."
   fi
+}
+
+#[DEPENDENCY]
+check_dependency() {
+  if [ -z "$(which "$1")" ]; then
+    error "$1 was not found on the system. Please install it."
+  fi
+}
+
+check_mole_dependencies() {
+  check_dependency "sed"
+  check_dependency "wc"
+  check_dependency "realpath"
+  check_dependency "date"
+  check_dependency "awk"
+  check_dependency "stat"
+  check_dependency "which"
+  check_dependency "mkdir"
+  check_dependency "touch"
+  check_dependency "whoami"
+  check_dependency "$EDITOR"
+  check_dependency "dirname"
+  check_dependency "basename"
 }
 
 check_mole_rc() {
   if ! [ -e "$MOLE_RC" ]; then
-    error "MOLE_RC is set";
+    error "Set value MOLE_RC!"
   fi
 
   if ! [ -f "$MOLE_RC" ]; then
-    error "MOLE_RC=$MOLE_RC should be file";
+    error "MOLE_RC=$MOLE_RC should be file"
   fi
 
   if ! [ -w "$MOLE_RC" ]; then
-    error "MOLE_RC=$MOLE_RC should be writable file";
+    error "MOLE_RC=$MOLE_RC should be writable file"
   fi
 
   if ! [ -r "$MOLE_RC" ]; then
-    error "MOLE_RC=$MOLE_RC should be readable file";
+    error "MOLE_RC=$MOLE_RC should be readable file"
   fi
-}
-
-#[COMMAND]
-check_command_existance() {
-  if ! which "$1"; then
-    error "Could not find command $1";
-  fi
-}
-
-check_compatability() {
-  if [ -z "$EDITOR" ]; then
-    error "Could not find editor! Please specify variable EDITOR!";
-  fi
-
-  #check if awk available
-  check_command_existance "awk";
-  #check if sed available
-  check_command_existance "sed";
-  #check if wc available
-  check_command_existance "wc";
-  #check if bzip2 available (could be suspicious for secret logging)
-  #check_command_existance "bzip2"
-  #check if date available
-  check_command_existance "date";
 }
 
 # [FILE]
 create_path_with_file() {
   if ! [ -e "$1" ]; then
     if ! mkdir -p "$(dirname "$1")" || ! touch "$1"; then
-      error "Could not create path MOLE_RC=\"$MOLE_RC\"! Try to change MOLE_RC value.";
+      error "Could not create path MOLE_RC=\"$MOLE_RC\"! Try to change MOLE_RC value."
     fi
   fi
 }
@@ -113,28 +148,30 @@ open_file_mole_rc() {
 
   _opened=$(get_current_time)
   if [ -d "$1" ]; then
-    open_directory_mole_rc "$1" "$2" "" "" "";
+    open_directory_mole_rc "$1" "$2" "" "" ""
   else
     if ! "$EDITOR" "$1"; then
-      error "Editor threw an error.";
+      error "Editor threw an error."
     fi
 
+    _edited="0"
     if [ -e "$1" ]; then
-      _edited=$(get_edited_file_time "$1");
-      write_mole_rc "$(get_absolute_path "$1")" "$2" "$(integer_max "$_opened" "$_edited")";
+      _edited=$(get_edited_file_time "$1")
     fi
 
+      write_mole_rc "$(get_absolute_path "$1")" "$2" "$(integer_max "$_opened" "$_edited")"
   fi
 }
 
 #[FILE_REG_EXPR] [GROUPS] [N_START_DATE] [N_END_DATE]
 filter_mole_rc() {
-  awk -F";" \
-  -v dir_exp="$1" -v groups="$2" \
-  -v start_date="$3" -v end_date="$4" \
-  '
+  awk -F"$DELIMITER" \
+    -v delimiter="," \
+    -v dir_exp="$1" -v groups="$2" \
+    -v start_date="$3" -v end_date="$4" \
+    '
     BEGIN {
-      split(groups, group_arr, ",");
+      split(groups, group_arr, delimiter);
     }
     {
       good = 0;
@@ -143,9 +180,9 @@ filter_mole_rc() {
         find_group = 0;
         if (groups=="") { find_group = 1; } else
         {
-        for (key in group_arr) {
-          if (group_arr[key]!="" && group_arr[key]==$2) { find_group = 1; break; }
-        }
+          for (key in group_arr) {
+            if (group_arr[key]!="" && group_arr[key]==$2) { find_group = 1; break; }
+          }
         }
 
         for (i=3;i<=NF && find_group==1;i++)
@@ -160,15 +197,15 @@ filter_mole_rc() {
         if (good) print $0
       }
     }' \
-  "$MOLE_RC"
+    "$MOLE_RC"
 }
 
 #[DIRECTORY] [GROUPS] [N_START_DATE] [N_END_DATE] [M_FLAG]
 open_directory_mole_rc() {
   _tmp="$(
-    filter_mole_rc "$1" "$2" "$3" "$4" | awk -F";" \
-    -v m_flag="$5" \
-    '
+    filter_mole_rc "$1" "$2" "$3" "$4" | awk -F"$DELIMITER" \
+      -v m_flag="$5" \
+      '
     BEGIN {
       file = ""
       group = ""
@@ -198,47 +235,47 @@ open_directory_mole_rc() {
         print group
       }
     }'
-  )";
+  )"
 
   if ! [ "$(echo "$_tmp" | wc -l)" -eq 2 ]; then
-    error "Could not find the file, which suits filters in directory. Use -h for more info.";
+    error "Could not find the file, which suits filters in directory. Use -h for more info."
   fi
 
-  open_file_mole_rc "$(echo "$_tmp" | sed "1q;d")" "$(echo "$_tmp" | sed "2q;d")";
+  open_file_mole_rc "$(echo "$_tmp" | sed "1q;d")" "$(echo "$_tmp" | sed "2q;d")"
 }
 
 # [DIRECTORY] [GROUPS] [START_DATE] [END_DATE]
 list_info_mole_rc() {
-    filter_mole_rc "$1" "$2" "$3" "$4" | awk -F";" -v OFS=";" \
-    '
+  filter_mole_rc "$1" "$2" "$3" "$4" | awk -F"$DELIMITER" \
+    'BEGIN {
+      indent = 0
+    }
     {
       group_name = $2=="" ? "-" : $2;
       if (map[$1]=="") map[$1]=group_name; else map[$1]=map[$1] "," group_name;
+      indent = (indent+0 < length($1) ) ? length($1) : indent;
     }
     END {
       for (key in map) {
-        printf("%s: %s\n", key, map[key]);
+        fmt=sprintf("%%-%ds%%s\n",indent+2)
+        printf(fmt, key ":", map[key]);
       }
     }
-    ';
+    '
 }
 
-# [FILENAME] [DIRECTORIES (should be absolute paths)] [START_DATE] [END_DATE]
+# [FILE_NAME_TO_CREATE][DIRECTORIES (should be absolute paths)] [START_DATE] [END_DATE]
 create_secret_log() {
-  if ! [ -d "$1" ]; then
-    error "Given path is not directory."
-  fi
-
-  awk -F";" -v OFS=';' \
-  -v directories="$1" -v start_date="$2" -v end_date="$3" \
-  '
+  awk -F"$DELIMITER" -v OFS=";" \
+    -v delimiter="$DELIMITER" -v directories="$2" -v start_date="$3" -v end_date="$4" \
+    '
   BEGIN {
-    split(directories, directory_arr, ";")
+    split(directories, directory_arr, delimiter);
   }
   {
     for (key in directory_arr) {
-    directory="^" directory_arr[key] "[^\/]+$"
-    if (match($1, directory)) {
+    directory_expr="^" directory_arr[key] "/[^/]+$"
+    if (directories == "" || match($1, directory_expr)) {
       fields = 1
       for(i=3;i<=NF;i++)
       {
@@ -254,18 +291,17 @@ create_secret_log() {
       }
     }
     }
-  }' "$MOLE_RC" | bzip2 > "$1";
+  }' "$MOLE_RC" | sort "-t" ";" "-k1" | bzip2 >"$1"
 }
 
 # args:
 # FILE - path to the file
 # GROUP - group of the file
 # DATE - date in nanoseconds
-write_mole_rc() { #TODO function can be optimized using sed
-  _tmp_file=$(mktemp)
-  awk -F";" -v OFS=';' \
-  -v name="$1" -v group="$2" -v date="$3" \
-  '
+write_mole_rc() {
+  _result="$(awk -F"$DELIMITER" -v OFS="$DELIMITER" \
+    -v name="$1" -v group="$2" -v date="$3" \
+    '
       BEGIN { found = 0; }
       {
         if ($1==name && $2==group) {
@@ -277,20 +313,24 @@ write_mole_rc() { #TODO function can be optimized using sed
       }
       END { if (found == 0) print name,group,date }
       ' \
-  "$MOLE_RC" >"$_tmp_file"
-  mv "$_tmp_file" "$MOLE_RC"
+    "$MOLE_RC")"
+  echo "$_result" >"$MOLE_RC"
 }
 
 ################################# READ_OF_ARGS #######################################
-a_flag=""; # date type
-b_flag=""; # date type
-h_flag=0;  # help flag
-g_flag=""; # string type (collection fo strings in string)
-m_flag=0;  # flag to open file which is opened mostly
-d_flag=0;  # default group flag
 
-list_flag=0; #to list group info
-secret_log_flag=0; #to generate secret info
+#check mole dependencies
+check_mole_dependencies
+
+a_flag="" # date type
+b_flag="" # date type
+h_flag=0  # help flag
+g_flag="" # string type (collection fo strings in string)
+m_flag=0  # flag to open file which is opened mostly
+d_flag=0  # default group flag
+
+list_flag=0       #to list group info
+secret_log_flag=0 #to generate secret info
 
 case $1 in
 list) list_flag=1 ;;
@@ -298,7 +338,7 @@ secret-log) secret_log_flag=1 ;;
 esac
 
 if [ "$list_flag" -eq 1 ] || [ "$secret_log_flag" -eq 1 ]; then
-  shift;
+  shift
 fi
 
 while getopts a:b:g:hmd flag; do
@@ -313,48 +353,49 @@ while getopts a:b:g:hmd flag; do
   esac
 done
 
-shift "$((OPTIND - 1))";
+
+shift "$((OPTIND - 1))"
+
+if [ $h_flag -eq 1 ]; then
+  help
+  exit 0
+fi
 
 #create moler_rc
 create_path_with_file "${MOLE_RC}"
 #check existance fo mole_rc
-check_mole_rc;
-#chek if it is possible to run script normally
-check_compatability;
+check_mole_rc
+
 
 #secret-log processing
 if [ $secret_log_flag -eq 1 ]; then
 
   if [ "$#" -eq 0 ]; then
-    error "No directory is given for logging!";
+    error "No directory is given for logging!"
   fi
 
-  directories="$(get_absolute_path "$1")";
-  shift;
+  directories="$(get_absolute_path "$1")"
+  shift
 
   while [ "$#" -ne 0 ]; do
-    if ! [ -d  "$1" ]; then
-      error "$1 is not directory!";
-    fi
-
-    directories="$directories;$(get_absolute_path "$1")";
+    directories="$directories$DELIMITER$(get_absolute_path "$1")"
+    shift
   done
 
-  create_secret_log "log_$(whoami)_$(nanoseconds_to_date "$(get_current_time)")" \
-    "$g_flag" "$a_flag" "$b_flag"
+  create_secret_log "log_$(whoami)_$(nanoseconds_to_date "$(get_current_time)").bz2" \
+    "$directories" "$a_flag" "$b_flag"
 
   exit 0
 fi
-#######################
 
-directory="$(get_absolute_path "$PWD")";
+directory="$(get_absolute_path "$PWD")"
 
 if [ "$#" -eq 1 ]; then
 
   if [ -e "$1" ]; then
-    directory="$(get_absolute_path "$1")";
+    directory="$(get_absolute_path "$1")"
   else
-    directory="$1";
+    directory="$1"
   fi
 
   shift
@@ -363,19 +404,9 @@ fi
 if [ "$#" -ne 0 ]; then
   error "Incorrect command format. Use -h to get more info."
 fi
-#######################################################################################
-
-echo "DEBUG: -a $a_flag | -b $b_flag | -g $g_flag | -m $m_flag | -h $h_flag | dir $directory | l_f $list_flag | s_f $secret_log_flag | -d $d_flag"
-echo "CONFIGS: rc $MOLE_RC | ed $EDITOR"
-echo "DIRECTORY: $directory"
 
 #list processing
 if [ "$list_flag" -eq 1 ]; then
-
-  if ! [ -d "$directory" ]; then
-      error "Path $directory is not directory"
-  fi
-
   list_info_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag"
   exit 0
 fi
