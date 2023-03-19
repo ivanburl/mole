@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 
 #configurations
 EDITOR="${EDITOR:-${VISUAL:-vi}}"
@@ -69,7 +69,8 @@ get_edited_file_time() {
     error "File $1 does not exist."
   fi
 
-  integer_max "$(stat "$1" -c "%X")" "$(stat "$1" -c "%Y")"
+  echo "0"
+  #TODO echo $(( $(integer_max "$(stat "$1" -c "%X")" "$(stat "$1" -c "%Y")") * $NSEC_IN_SEC ))
 }
 
 #[STRING] #[END_OF_DAY]
@@ -79,18 +80,13 @@ date_to_nanoseconds() {
     error "Incorrect date format. Given $1, expected yyyy-mm-dd."
   fi
 
-  if [ "$2" -eq 1 ]; then
-    awk -v date="$1" 'BEGIN{ print mktime(sprintf("%s 00 00 00", date)) * 1000000000}'
-  else
-    awk -v date="$1" 'BEGIN {print mktime(sprintf("%s 23 59 59", date)) * 1000000000}'
-  fi
+  _date="$(echo "$1" | tr '-' ' ')"
+  awk -v date="$_date" 'BEGIN {print mktime(sprintf("%s 00 00 00", date)) * 1000000000}'
 }
 
 #[NANOSECONDS]
 nanoseconds_to_date() {
-  if ! date -d @"$(($1 / $NSEC_IN_SEC))" +'%Y-%m-%d_%H-%M-%S'; then
-    error "Cant convert nanoseconds to the date."
-  fi
+  awk -v nanoseconds="$1" 'BEGIN { seconds = nanoseconds / 1000000000; print strftime("%Y-%m-%d_%H-%M-%S", seconds) }'
 }
 
 #[DEPENDENCY]
@@ -150,15 +146,12 @@ open_file_mole_rc() {
   if [ -d "$1" ]; then
     open_directory_mole_rc "$1" "$2" "" "" ""
   else
-    if ! "$EDITOR" "$1"; then
-      error "Editor threw an error."
-    fi
+    $EDITOR "$1"
 
     _edited="0"
     if [ -e "$1" ]; then
       _edited=$(get_edited_file_time "$1")
     fi
-
       write_mole_rc "$(get_absolute_path "$1")" "$2" "$(integer_max "$_opened" "$_edited")"
   fi
 }
@@ -175,7 +168,7 @@ filter_mole_rc() {
     }
     {
       good = 0;
-      if ( (getline _ < $1)>=0 && match($1, dir_exp))
+      if (match($1, dir_exp))
       {
         find_group = 0;
         if (groups=="") { find_group = 1; } else
@@ -184,7 +177,6 @@ filter_mole_rc() {
             if (group_arr[key]!="" && group_arr[key]==$2) { find_group = 1; break; }
           }
         }
-
         for (i=3;i<=NF && find_group==1;i++)
         {
           if ((start_date=="" || $i+0>=start_date+0) &&
@@ -231,13 +223,12 @@ open_directory_mole_rc() {
     }
     END {
       if (file != "") {
-        print file
-        print group
+        printf("%s\n%s", file, group);
       }
     }'
   )"
 
-  if ! [ "$(echo "$_tmp" | wc -l)" -eq 2 ]; then
+  if [ -z "$_tmp" ]; then
     error "Could not find the file, which suits filters in directory. Use -h for more info."
   fi
 
@@ -246,19 +237,36 @@ open_directory_mole_rc() {
 
 # [DIRECTORY] [GROUPS] [START_DATE] [END_DATE]
 list_info_mole_rc() {
+  _tmp=$(filter_mole_rc "$1" "$2" "$3" "$4")
   filter_mole_rc "$1" "$2" "$3" "$4" | awk -F"$DELIMITER" \
-    'BEGIN {
+    '
+    function basename(file) {
+        sub(".*/", "", file)
+        return file
+    }
+
+    BEGIN {
       indent = 0
     }
     {
-      group_name = $2=="" ? "-" : $2;
-      if (map[$1]=="") map[$1]=group_name; else map[$1]=map[$1] "," group_name;
-      indent = (indent+0 < length($1) ) ? length($1) : indent;
+      file_name = basename($1)
+      group_name = $2
+
+      if (map[file_name]=="") map[file_name]=group_name; else
+      if (group_name!="") map[file_name]=map[file_name] "," group_name;
+
+      indent = (indent+0 < length(file_name)+0 ) ? length(file_name) : indent;
     }
     END {
       for (key in map) {
+        to_lower[tolower(key)] = key
+      }
+
+      n=asorti(to_lower, sorted)
+      for (i=1;i<=n;i++) {
         fmt=sprintf("%%-%ds%%s\n",indent+2)
-        printf(fmt, key ":", map[key]);
+        key = to_lower[sorted[i]]
+        printf(fmt, key ":", map[key]=="" ? "-" : map[key]);
       }
     }
     '
@@ -271,27 +279,45 @@ create_secret_log() {
     '
   BEGIN {
     split(directories, directory_arr, delimiter);
+    if (directories=="") directory_arr[1]="123";
   }
   {
-    for (key in directory_arr) {
-    directory_expr="^" directory_arr[key] "/[^/]+$"
-    if (directories == "" || match($1, directory_expr)) {
-      fields = 1
-      for(i=3;i<=NF;i++)
+    for (key in directory_arr)
+    {
+      directory_expr= "^" directory_arr[key] "/[^/]+$"
+      if (directories == "" || match($1, directory_expr))
       {
-        if ((start_date == "" || $i+0 >= start_date+0) && (end_date == "" || $i+0 <= end_date+0)) {
-          fields++;
-          $fields = strftime("%d-%m-%Y_%H-%M-%S", $i/1000000000);
+        for(i=3;i<=NF;i++)
+        {
+          if ((start_date == "" || $i+0 >= start_date+0) && (end_date == "" || $i+0 <= end_date+0))
+          {
+            if (result[$1]=="")
+              result[$1]= $i;
+            else
+              result[$1] = result[$1] ";" $i;
+          }
         }
       }
-      NF=fields;
-      if (NF>=2) {
-        print $0
-        break;
+    }
+  }
+  END {
+    for (key in result)
+    {
+      printf("%s;", key);
+
+      split(result[key], dates, ";");
+      asort(dates);
+
+      for (i=1;i<length(dates);i++)
+      {
+          printf("%s;", strftime("%Y-%m-%d_%H-%M-%S", dates[i]/1000000000));
       }
+
+      printf("%s\n", strftime("%Y-%m-%d_%H-%M-%S", dates[length(dates)]/1000000000));
     }
-    }
-  }' "$MOLE_RC" | sort "-t" ";" "-k1" | bzip2 >"$1"
+  }' \
+  "$MOLE_RC" | sort -df "-t" ";" "-k1" | bzip2 >"$1"
+
 }
 
 # args:
@@ -344,15 +370,14 @@ fi
 while getopts a:b:g:hmd flag; do
   case "${flag}" in
   d) d_flag=1 ;;
-  a) a_flag="$(date_to_nanoseconds "$OPTARG")" ;;
-  b) b_flag="$(date_to_nanoseconds "$OPTARG")" ;;
+  a) a_flag=$(("$(date_to_nanoseconds "$OPTARG")" + 24*60*60*"$NSEC_IN_SEC"));;
+  b) b_flag="$(date_to_nanoseconds "$OPTARG")";;
   h) h_flag=1 ;;
   g) g_flag=$OPTARG ;;
   m) m_flag=1 ;;
   *) error "Unknown option: $OPTARG." ;;
   esac
 done
-
 
 shift "$((OPTIND - 1))"
 
@@ -361,8 +386,10 @@ if [ $h_flag -eq 1 ]; then
   exit 0
 fi
 
+#get full path of mole_rc
+MOLE_RC=$(get_absolute_path "$MOLE_RC")
 #create moler_rc
-create_path_with_file "${MOLE_RC}"
+create_path_with_file "$MOLE_RC"
 #check existance fo mole_rc
 check_mole_rc
 
@@ -371,18 +398,21 @@ check_mole_rc
 if [ $secret_log_flag -eq 1 ]; then
 
   if [ "$#" -eq 0 ]; then
-    error "No directory is given for logging!"
+    directories=""
+  else
+    directories="$(get_absolute_path "$1")"
+    shift
   fi
-
-  directories="$(get_absolute_path "$1")"
-  shift
 
   while [ "$#" -ne 0 ]; do
     directories="$directories$DELIMITER$(get_absolute_path "$1")"
     shift
   done
 
-  create_secret_log "log_$(whoami)_$(nanoseconds_to_date "$(get_current_time)").bz2" \
+  SECRET_LOG="/home/$USER/.mole"
+  mkdir -p "$SECRET_LOG"
+
+  create_secret_log "$SECRET_LOG/log_$(whoami)_$(nanoseconds_to_date "$(get_current_time)").bz2" \
     "$directories" "$a_flag" "$b_flag"
 
   exit 0
@@ -413,7 +443,8 @@ fi
 ################
 
 if [ -d "$directory" ]; then
-  open_directory_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag" "$m_flag"
+  #[DIRECTORY] [GROUPS] [N_START_DATE] [N_END_DATE] [M_FLAG]
+  open_directory_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag" "$m_flag";
   exit 0
 fi
 
