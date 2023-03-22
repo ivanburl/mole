@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# LOGIN: xburlu00
+# FULL NAME: Ivan Burlutskyi
+
 #configurations
 EDITOR="${EDITOR:-${VISUAL:-vi}}"
 MOLE_RC="${MOLE_RC}"
@@ -18,14 +21,16 @@ help() {
         DEPENDENCIES: wc, sed, awk, realpath, date
         NOTE: for correct work please set up MOLE_RC and EDITOR value
         mole -h  #get help
-        mole [-g GROUP_NAME] FILE #open file and set the group flag
+        mole [-g GROUP_NAME] [-r] FILE #open file and set the group flag
         mole [-m] [FILTER] [DIRECTORY] #open last edited or opened file in directory, which suits filters
-        mole list [FILTER] [DIRECTORY] # enlist files with their group info (files without group, are signed as '-')
-        [FILTER] = [-g GROUP1,GROUP2,...,GROUPN] [-a DATE] [-b DATE]
+        mole list [-r] [FILTER] [DIRECTORY] # enlist files with their group info (files without group, are signed as '-')
+        [FILTER] = [-g GROUP1,GROUP2,...,GROUPN] [-a DATE] [-b DATE] [-d] [-r]
         --g - group flag
         --a - files which were opened or edited from DATE (DATE format YYYY-MM-DD)
         --b - files which were opened or edited before DATE (DATE format YYYY-MM-DD)
-        --m - open file by frequency of opening or editing"
+        --m - open file by frequency of opening or editing
+        --d - filter groups without defined group
+        --r - recursively filter directories"
 }
 
 # [number1] [number2]
@@ -275,10 +280,11 @@ list_info_mole_rc() {
     '
 }
 
-# [FILE_NAME_TO_CREATE][DIRECTORIES (should be absolute paths)] [START_DATE] [END_DATE]
+# [FILE_NAME_TO_CREATE][DIRECTORIES (should be absolute paths)] [START_DATE] [END_DATE] [RECURSIVE_FLAG]
 create_secret_log() {
   awk -F"$DELIMITER" -v OFS=";" \
     -v delimiter="$DELIMITER" -v directories="$2" -v start_date="$3" -v end_date="$4" \
+    -v recursive="$5" \
     '
   BEGIN {
     split(directories, directory_arr, delimiter);
@@ -287,7 +293,12 @@ create_secret_log() {
   {
     for (key in directory_arr)
     {
-      directory_expr= "^" directory_arr[key] "/[^/]+$"
+      if (recursive==0) {
+        directory_expr= "^" directory_arr[key] "/[^/]+$"
+      } else
+      {
+        directory_expr = "^" directory_arr[key]
+      }
       if (directories == "" || match($1, directory_expr))
       {
         for(i=3;i<=NF;i++)
@@ -422,7 +433,7 @@ if [ $secret_log_flag -eq 1 ]; then
   mkdir -p "$SECRET_LOG"
 
   create_secret_log "$SECRET_LOG/log_$(whoami)_$(nanoseconds_to_date "$(get_current_time)").bz2" \
-    "$directories" "$a_flag" "$b_flag"
+    "$directories" "$a_flag" "$b_flag" "$r_flag"
 
   exit 0
 fi
@@ -446,14 +457,22 @@ fi
 
 #list processing
 if [ "$list_flag" -eq 1 ]; then
-  list_info_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag" "$d_flag"
+  if [ $r_flag -eq 0 ]; then
+    list_info_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag" "$d_flag"
+  else
+    list_info_mole_rc "^$(get_absolute_path "$directory")/" "$g_flag" "$a_flag" "$b_flag" "$d_flag"
+  fi
   exit 0
 fi
 ################
 
 if [ -d "$directory" ]; then
   #[DIRECTORY] [GROUPS] [N_START_DATE] [N_END_DATE] [M_FLAG]
-  open_directory_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag" "$d_flag" "$m_flag";
+  if [ $r_flag -eq 0 ]; then
+    open_directory_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag" "$d_flag" "$m_flag";
+  else
+    open_directory_mole_rc "^$(get_absolute_path "$directory")/" "$g_flag" "$a_flag" "$b_flag" "$d_flag" "$m_flag";
+  fi
   exit 0
 fi
 
