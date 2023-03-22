@@ -60,12 +60,7 @@ get_absolute_path()
 }
 
 get_current_time() {
-  if [ -z "${BINSLOZKA}" ]; then
-      date +%s%N
-  else
-      # for testing
-      date -d "$("${BINSLOZKA}"/testdate)" +%s%N
-  fi
+  date +%s%N
 }
 
 # args: FILE - file to check
@@ -267,17 +262,11 @@ list_info_mole_rc() {
     }
     END {
       for (key in map) {
-        to_lower[tolower(key)] = key
-      }
-
-      n=asorti(to_lower, sorted)
-      for (i=1;i<=n;i++) {
         fmt=sprintf("%%-%ds%%s\n",indent+2)
-        key = to_lower[sorted[i]]
         printf(fmt, key ":", map[key]=="" ? "-" : map[key]);
       }
     }
-    '
+    ' | sort -df "-t" ":" "-k1"
 }
 
 # [FILE_NAME_TO_CREATE][DIRECTORIES (should be absolute paths)] [START_DATE] [END_DATE] [RECURSIVE_FLAG]
