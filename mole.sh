@@ -144,7 +144,7 @@ open_file_mole_rc() {
 
   _opened=$(get_current_time)
   if [ -d "$1" ]; then
-    open_directory_mole_rc "$1" "$2" "" "" ""
+    open_directory_mole_rc "$1" "$2" "" "" "" ""
   else
     $EDITOR "$1"
 
@@ -156,12 +156,13 @@ open_file_mole_rc() {
   fi
 }
 
-#[FILE_REG_EXPR] [GROUPS] [N_START_DATE] [N_END_DATE]
+#[FILE_REG_EXPR] [GROUPS] [N_START_DATE] [N_END_DATE] [EMPTY GROUP]
 filter_mole_rc() {
   awk -F"$DELIMITER" \
     -v delimiter="," \
     -v dir_exp="$1" -v groups="$2" \
     -v start_date="$3" -v end_date="$4" \
+    -v empty_group="$5" \
     '
     BEGIN {
       split(groups, group_arr, delimiter);
@@ -171,12 +172,15 @@ filter_mole_rc() {
       if (match($1, dir_exp))
       {
         find_group = 0;
+
         if (groups=="") { find_group = 1; } else
         {
           for (key in group_arr) {
             if (group_arr[key]!="" && group_arr[key]==$2) { find_group = 1; break; }
           }
         }
+        if (empty_group==1 && $2=="") find_group = 1;
+
         for (i=3;i<=NF && find_group==1;i++)
         {
           if ((start_date=="" || $i+0>=start_date+0) &&
@@ -192,11 +196,11 @@ filter_mole_rc() {
     "$MOLE_RC"
 }
 
-#[DIRECTORY] [GROUPS] [N_START_DATE] [N_END_DATE] [M_FLAG]
+#[DIRECTORY] [GROUPS] [N_START_DATE] [N_END_DATE] [EMPTY_GROUP] [M_FLAG]
 open_directory_mole_rc() {
   _tmp="$(
-    filter_mole_rc "$1" "$2" "$3" "$4" | awk -F"$DELIMITER" \
-      -v m_flag="$5" \
+    filter_mole_rc "$1" "$2" "$3" "$4" "$5" | awk -F"$DELIMITER" \
+      -v m_flag="$6" \
       '
     BEGIN {
       file = ""
@@ -235,10 +239,9 @@ open_directory_mole_rc() {
   open_file_mole_rc "$(echo "$_tmp" | sed "1q;d")" "$(echo "$_tmp" | sed "2q;d")"
 }
 
-# [DIRECTORY] [GROUPS] [START_DATE] [END_DATE]
+# [DIRECTORY] [GROUPS] [START_DATE] [END_DATE] [EMPTY_GROUP]
 list_info_mole_rc() {
-  _tmp=$(filter_mole_rc "$1" "$2" "$3" "$4")
-  filter_mole_rc "$1" "$2" "$3" "$4" | awk -F"$DELIMITER" \
+  filter_mole_rc "$1" "$2" "$3" "$4" "$5" | awk -F"$DELIMITER" \
     '
     function basename(file) {
         sub(".*/", "", file)
@@ -354,6 +357,7 @@ h_flag=0  # help flag
 g_flag="" # string type (collection fo strings in string)
 m_flag=0  # flag to open file which is opened mostly
 d_flag=0  # default group flag
+r_flag=0  # recursive search flag
 
 list_flag=0       #to list group info
 secret_log_flag=0 #to generate secret info
@@ -367,9 +371,10 @@ if [ "$list_flag" -eq 1 ] || [ "$secret_log_flag" -eq 1 ]; then
   shift
 fi
 
-while getopts a:b:g:hmd flag; do
+while getopts a:b:g:hmdr flag; do
   case "${flag}" in
   d) d_flag=1 ;;
+  r) r_flag=1 ;;
   a) a_flag=$(("$(date_to_nanoseconds "$OPTARG")" + 24*60*60*"$NSEC_IN_SEC"));;
   b) b_flag="$(date_to_nanoseconds "$OPTARG")";;
   h) h_flag=1 ;;
@@ -378,6 +383,10 @@ while getopts a:b:g:hmd flag; do
   *) error "Unknown option: $OPTARG." ;;
   esac
 done
+
+if [ $d_flag -eq 1 ] && [ -z "$g_flag" ]; then
+  error "Arguments -g and -d cant be together."
+fi
 
 shift "$((OPTIND - 1))"
 
@@ -437,14 +446,14 @@ fi
 
 #list processing
 if [ "$list_flag" -eq 1 ]; then
-  list_info_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag"
+  list_info_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag" "$d_flag"
   exit 0
 fi
 ################
 
 if [ -d "$directory" ]; then
   #[DIRECTORY] [GROUPS] [N_START_DATE] [N_END_DATE] [M_FLAG]
-  open_directory_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag" "$m_flag";
+  open_directory_mole_rc "^$(get_absolute_path "$directory")/[^/]+$" "$g_flag" "$a_flag" "$b_flag" "$d_flag" "$m_flag";
   exit 0
 fi
 
