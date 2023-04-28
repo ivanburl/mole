@@ -1,18 +1,19 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 
 # LOGIN: xburlu00
 # FULL NAME: Ivan Burlutskyi
-
+export LC_ALL=C
+export POSIXLY_CORRECT=yes
 #configurations
 EDITOR="${EDITOR:-${VISUAL:-vi}}"
 MOLE_RC="${MOLE_RC}"
 NSEC_IN_SEC=1000000000
-DELIMITER='-'
+DELIMITER=';'
 
 # [DESCRIPTION]
 # returns an error with code 1 and description
 error() {
-  echo "Error occurred. Description: $1"
+  echo "Error occurred. Description: $1" >&2
   exit 1
 }
 
@@ -46,6 +47,10 @@ integer_max() {
 # FILE - file to gen absolute path
 get_absolute_path()
 {
+  if [ -z "$1" ]; then
+    echo ""
+    return
+  fi
   _absolute_path=$1
   _unrecognised_path=""
 
@@ -80,13 +85,13 @@ date_to_nanoseconds() {
     error "Incorrect date format. Given $1, expected yyyy-mm-dd."
   fi
 
-  _date="$(echo "$1" | tr '-' ' ')"
-  awk -v date="$_date" 'BEGIN {print mktime(sprintf("%s 00 00 00", date)) * 1000000000}'
+  date -d "$1" "+%s%N"
 }
 
 #[NANOSECONDS]
 nanoseconds_to_date() {
-  awk -v nanoseconds="$1" 'BEGIN { seconds = nanoseconds / 1000000000; print strftime("%Y-%m-%d_%H-%M-%S", seconds) }'
+  _seconds=$(( $1/NSEC_IN_SEC ))
+  date -d "@$_seconds" "+%Y-%m-%d_%H-%M-%S"
 }
 
 #[DEPENDENCY]
@@ -308,15 +313,16 @@ create_secret_log() {
     {
       printf("%s;", key);
 
-      split(result[key], dates, ";");
-      asort(dates);
+      cmd = sprintf("echo \"%s\" | tr \";\" \"\\n\" | sort -n | tr \"\\n\" \";\"", result[key]);
+      cmd | getline tmp_res; close(cmd);
 
-      for (i=1;i<length(dates);i++)
+      size = split(tmp_res, dates, ";");
+      for (i=1;i<size;i++)
       {
-          printf("%s;", strftime("%Y-%m-%d_%H-%M-%S", dates[i]/1000000000));
+          cmd = sprintf("date -d \"@%d\" \"+%%Y-%%m-%%d_%%H-%%M-%%S\"", dates[i]/1000000000);
+          cmd | getline time; close(cmd);
+          if (i==size-1) printf("%s\n", time); else printf("%s;", time);
       }
-
-      printf("%s\n", strftime("%Y-%m-%d_%H-%M-%S", dates[length(dates)]/1000000000));
     }
   }' \
   "$MOLE_RC" | sort -df "-t" ";" "-k1" | bzip2 >"$1"
@@ -375,7 +381,7 @@ while getopts a:b:g:hmdr flag; do
   case "${flag}" in
   d) d_flag=1 ;;
   r) r_flag=1 ;;
-  a) a_flag=$(("$(date_to_nanoseconds "$OPTARG")" + 24*60*60*"$NSEC_IN_SEC"));;
+  a) a_flag=$(($(date_to_nanoseconds "$OPTARG") + 24*60*60*1000000000 ));;
   b) b_flag="$(date_to_nanoseconds "$OPTARG")";;
   h) h_flag=1 ;;
   g) g_flag=$OPTARG ;;
